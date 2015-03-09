@@ -11,7 +11,7 @@ from CheMPS2_iface import computeGF
 from utils import ToClass
 import sys
 import scipy.optimize
-from cmath import sqrt
+from cmath import sqrt, exp
 
 def main(InputDict, fout = sys.stdout):
   timer_all = Timer()
@@ -116,7 +116,7 @@ def BathDiscretization(DeltaArray, freqArray, V0, e0):
 
   def target(x):
     V, e = unpack(x)
-    return np.sum(map(lambda i: la.norm(DeltaArray[i] - Delta_from_bath(freqArray[i], False, V, e)) ** 2, range(nfreq)))
+    return np.sum(map(lambda i: la.norm(DeltaArray[i] - Delta_from_bath(freqArray[i], V, e)) ** 2, range(nfreq)))
   
   x0 = np.hstack([V0.flatten(), e0])
   results = scipy.optimize.minimize(target, x0, tol = 1e-6)
@@ -164,16 +164,17 @@ def DMFT_SCF(Lattice, V, e, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
     
     V, e = new_V, new_e
   # now compute N_loc (interacting)
-  r = 8
-  for n_sample in [2,4,8,16,32]:
-    integral_freq = -r + r * np.exp(map(np.pi / n_sample * (i+0.5) * 1.j, range(n_sample)))
+  r = 6
+  for n_sample in [2,4,8,16,32,64,128,256]:
+    integral_freq = -r + r * np.exp(map(lambda i: np.pi / n_sample * (i+0.5) * 1.j, range(n_sample)))
     Deltaintegral = map(lambda freq: Delta_from_bath(freq, V, e), integral_freq)
-    E, GFintegral = computeGS(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, integral_freq, False, fout, verbose-3)
-    Sigmaintegral = map(lambda idx: SigDelta_from_Gimp(GFintegral[idx], integral_freq, Mu, h_imp) \
+    E, GFintegral = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, integral_freq, fout, verbose-4)
+    Sigmaintegral = map(lambda idx: SigDelta_from_Gimp(GFintegral[idx], integral_freq[idx], Mu, h_imp) \
             -Deltaintegral[idx], range(n_sample))
-    GlocintegralTr = map(lambda idx: np.trace(GR0_from_h_Sig(integral_freq, Mu, Fock, Sigmaintegral[idx], Lattice)), range(n_sample))
+    TrGlocintegral = map(lambda idx: np.trace(GR0_from_h_Sig(integral_freq[idx], Mu, Fock, Sigmaintegral[idx], Lattice)), range(n_sample))
     length = map(lambda i: exp(np.pi / n_sample * (i+1.) * 1.j)-exp(np.pi / n_sample * i * 1.j), range(n_sample))
-    N_loc = -np.sum(np.array(Glocintegral) * np.array(length)).imag * r
+    N_loc = np.sum(np.array(TrGlocintegral) * np.array(length)).imag * r
+    print TrGlocintegral
     print N_loc
   # define computation type
   # Dmet = ChooseRoutine(Inp.DMET, Inp.CTRL, Lattice, Topo)

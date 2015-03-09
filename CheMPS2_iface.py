@@ -34,7 +34,8 @@ def computeGF(h0, Mu, V, eps, Int2e, nelecA, nelecB, omega, fout, verbose):
   FCI.FillRandom(FCI.getVecLength(), CIvector)
 
   E = FCI.GSDavidson(CIvector)
-  fout.write("FCI energy E = %20.12f\n" % E)
+  if verbose > -1:
+    fout.write("FCI energy E = %20.12f\n" % E)
   
   crea_sites = np.array(range(nImp), dtype=ctypes.c_int)
   anni_sites = np.array(range(nImp), dtype=ctypes.c_int)
@@ -66,5 +67,6 @@ def computeGF(h0, Mu, V, eps, Int2e, nelecA, nelecB, omega, fout, verbose):
     GFtotal = GFadd + GFrem
     GFarray.append(GFtotal)
   
-  fout.write("Green's function computed\n")
+  if verbose > -1:
+    fout.write("Green's function computed\n")
   return E, GFarray
