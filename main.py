@@ -40,7 +40,8 @@ def main(InputDict, fout = sys.stdout):
 
   # mean-field solution and initial guess for Mu
   for iterMuMfd, Mu in enumerate(MuMfdSolver):
-    nelecMF = MfdSolver.run([np.zeros(1), np.zeros((1,1))], Mu, verbose-3).n
+    nImp = Lattice.supercell.nsites
+    nelecMF = MfdSolver.run([np.zeros(nImp), np.zeros((nImp,nImp))], Mu, verbose-3).n
     fout.write("Iter = %2d  Mu = %20.12f nelec = %20.12f\n" % (iterMuMfd, Mu, nelecMF))
     MuMfdSolver.update(nelecMF)
     if abs(1 - float(nelecMF)/nelec0) < Inp.DMFT.ThrNConv or iterMuMfd > Inp.MFD.MaxIterMu:
@@ -64,19 +65,19 @@ def main(InputDict, fout = sys.stdout):
   fout.write("epsilon = \n%s\n\n" % e)
   
   fout.write("Entering DMFT outer loop: n_emb and Mu\n\n")
-  nmin = int(nelec0+0.5)
-  nmax = Inp.DMFT.nbath+Lattice.supercell.nsites
-  for i, nEmb in enumerate(range(nmin, nmax)):
-    fout.write('*'*40 + "\n\n    MacroIteration %2d out of %2d\n\n" % (i, nmax-nmin) + '*'*40 + '\n\nn_emb = %2d\n\n' % nEmb)
+  #nmin = int(nelec0+0.5)
+  #nmax = Inp.DMFT.nbath+Lattice.supercell.nsites
+  #for i, nEmb in enumerate(range(nmin, nmax)):
+  #  fout.write('*'*40 + "\n\n    MacroIteration %2d out of %2d\n\n" % (i, nmax-nmin) + '*'*40 + '\n\nn_emb = %2d\n\n' % nEmb)
 
-    MuSearcher = MonoSearch(nelec0, x0 = Mu)
-    for iterMu, Mu in enumerate(MuSearcher):
-      fout.write("******** chemical potential iteration %2d ********\n\n" % iterMu)
-      fout.write("Mu = %20.12f\n\n" % Mu)
-      nelec = DMFT_SCF(Lattice, V, e, nEmb, nelec0, MfdSolver, Mu, Inp.DMFT, fout, verbose)
-      MuSearcher.update(nelec)
-      if abs(1 - float(nelec)/nelec0) < Inp.DMFT.ThrNConv:
-        break
+  MuSearcher = MonoSearch(nelec0, x0 = Mu)
+  for iterMu, Mu in enumerate(MuSearcher):
+    fout.write("******** chemical potential iteration %2d ********\n\n" % iterMu)
+    fout.write("Mu = %20.12f\n\n" % Mu)
+    nelec = DMFT_SCF(Lattice, V, e, nEmb, nelec0, MfdSolver, Mu, Inp.DMFT, fout, verbose)
+    MuSearcher.update(nelec)
+    if abs(1 - float(nelec)/nelec0) < Inp.DMFT.ThrNConv:
+      break
 
 def Delta_from_bath(freq, real, V, e):
   if not real:
@@ -125,10 +126,9 @@ def BathDiscretization(DeltaArray, freqArray, V0, e0):
     return np.sum(map(lambda i: la.norm(DeltaArray[i] - Delta_from_bath(freqArray[i], False, V, e)) ** 2, range(nfreq)))
   
   x0 = np.hstack([V0.flatten(), e0])
-  results = scipy.optimize.minimize(target, x0, tol = 1e-5)
+  results = scipy.optimize.minimize(target, x0, tol = 1e-6)
   V, e = unpack(results.x)
-  print "Bath discretization error", results.fun
-  return V, e
+  return results.fun, V, e
 
 def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
   fout.write("DMFT inner loop: self-energy and hybridization\n")
@@ -138,15 +138,17 @@ def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose)
   # impurity hamiltonian
   h_imp = Lattice.FFTtoT(h0)[0]
   # compute hybridization
-  for Iter in range(30):
-    print
-    print "V="
-    print V
-    print "epsilon="
-    print e
+  for Iter in range(inp_dmft.MaxInnerIter):
+    fout.write("Inner Iteration %2d\n" % Iter)
+    fout.write("V=\n")
+    fout.write("%s\n" % V)
+    fout.write("epsilon=\n")
+    fout.write("%s\n" % e)
     DeltaArray = map(lambda freq: Delta_from_bath(freq, False, V, e), inp_dmft.freq_sample)
     # compute impurity Green's function
-    E, GFArray = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nEmb, nEmb, inp_dmft.freq_sample, False, fout, verbose - 3)
+    E, CIvector, Ham, nEmb = computeGS(h_imp, Mu, V, e, Lattice.Ham.Int2e, fout, verbose-3)
+    GFArray = computeGF(h_imp.shape[0], nEmb, CIvector, E, Ham, Mu, inp_dmft.freq_sample, False, fout, verbose-3)
+
     # compute self-energy 
     SigmaArray = map(lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
             - DeltaArray[idx], range(nfreq))
@@ -154,15 +156,19 @@ def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose)
     GlocArray = map(lambda idx: GR0_from_h_Sig(inp_dmft.freq_sample[idx], Mu, False, Fock, SigmaArray[idx], Lattice), range(nfreq))
     newDeltaArray = map(lambda idx: Delta_from_Gloc(inp_dmft.freq_sample[idx], Mu, False, h_imp, SigmaArray[idx], GlocArray[idx]), \
             range(nfreq))
-    
-    err = np.sum(map(lambda i: la.norm(DeltaArray[i] - newDeltaArray[i])**2, range(nfreq)))
-    fout.write("RMS error = %20.12f\n" % err)
-    if err < 1e-4:
-      break
+
     damp = 0.5
     FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1.-damp) * DeltaArray[i], range(nfreq))
-    V, e = BathDiscretization(FitDeltaArray, inp_dmft.freq_sample, V, e)
-  
+    dis_err, new_V, new_e = BathDiscretization(FitDeltaArray, inp_dmft.freq_sample, V, e)
+    fout.write("Bath discretization error %20.12f" % dis_err)
+    err = sqrt(sum((new_V - V)**2) + sum((new_e-e)**2) / ((nImp+1) * nBath)).real
+    fout.write("RMS error = %20.12f" % err)    
+    if err < inp_dmft.ThrBathConv:
+      fout.write("  Converged\n")
+      break
+    else:
+        fout.write("\n")
+
   # define computation type
   # Dmet = ChooseRoutine(Inp.DMET, Inp.CTRL, Lattice, Topo)
   
