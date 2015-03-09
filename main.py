@@ -83,26 +83,40 @@ def Delta_from_bath(freq, real, V, e):
   return np.einsum('ip,jp,p->ij', V.conj(), V, 1./(freq-e))
 
 
-def Sigma_from_Gimp(G, freq, Mu, real, himp, Delta):
+def SigDelta_from_Gimp(G, freq, Mu, real, himp):
   nImp = himp.shape[0]
   if real:
     eta = 0.05 * np.sign(freq)
-    return np.eye(nImp, dtype = complex) * (freq + Mu + eta*1.j) - himp
+    freq += eta * 1.j
+  else:
+    freq *= 1.j
+  return np.eye(nImp, dtype = complex) * (freq + Mu) - himp - la.inv(G)
 
-
-  
+def GR0_from_h_Sig(freq, Mu, real, h0k, Sigma):
+  nImp = h0k.shape[1]
+  if real:
+    eta = 0.05 * np.sign(freq)
+    freq += eta * 1.j
+  else:
+    freq *= 1.j
+  G_k = np.array(map(lambda kidx: la.inv(np.eye(nImp, dtype = complex) * (freq + Mu) - h0k[kidx] - Sigma), range(h0k.shape[0])))
+  return Lattice.FFTtoT(G_k)[0]
 
 def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
   fout.write("DMFT inner loop: self-energy and hybridization\n")
   Fock = MfdSolver.Fock[0]
-  H0 = MfdSolver.H0
+  h0 = MfdSolver.H0
   # impurity hamiltonian
-  h_imp = Lattice.FFTtoT(H0)[0]
+  h_imp = Lattice.FFTtoT(h0)[0]
+  # compute hybridization
   DeltaArray = map(lambda freq: Delta_from_bath(freq, False, V, e), inp_dmft.freq_sample)
-  print DeltaArray
-  assert(0)
+  # compute impurity Green's function
   E, GFArray = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nEmb, nEmb, inp_dmft.freq_sample, False, fout, verbose - 3)
-  print map(la.norm, GFarray)
+  # compute self-energy 
+  SigmaArray = (lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
+          - DeltaArray[idx], len(inp_dmft.freq_sample))
+  # compute G(k,w) with self-energy
+
 
 
   # define computation type
