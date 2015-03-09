@@ -60,13 +60,13 @@ class RMfdSolver(object):
     ews = []
     for n in range(self.ncells):
       ew, ev = la.eigh(BdG[n])
-      occ = 1. - 1./(1+exp(1000.*ew))
+      occ = 1. - 1./(1+np.exp(100.*ew))
       sol = np.sum(occ > 0.5)
       ews.append(ew[2*nsites-sol:])
       u = ev[:nsites, 2*nsites-sol:]
       v = ev[nsites:, 2*nsites-sol:]
-      rho[n] = np.dot(ev[nsites:], np.dot(occ, ev[nsites:].T.conj()))
-      kappa[n] = np.dot(ev[:nsites], np.dot(occ, ev[nsites:].T.conj()))
+      rho[n] = np.dot(ev[nsites:], np.dot(np.diag(occ), ev[nsites:].T.conj()))
+      kappa[n] = np.dot(ev[:nsites], np.dot(np.diag(occ), ev[nsites:].T.conj()))
       #sol = np.sum(ew > 1e-4)
 
       #ews.append(ew[2*nsites-sol:])
