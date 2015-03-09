@@ -10,7 +10,7 @@ from CheMPS2_iface import computeGF
 #from diis import FDiisContext
 from utils import ToClass
 import sys
-import scipy
+import scipy.optimize
 
 def main(InputDict, fout = sys.stdout):
   timer_all = Timer()
@@ -40,7 +40,7 @@ def main(InputDict, fout = sys.stdout):
 
   # mean-field solution and initial guess for Mu
   for iterMuMfd, Mu in enumerate(MuMfdSolver):
-    nelecMF = MfdSolver.run([np.zeros(4), np.zeros((4,4))], Mu, verbose-3).n
+    nelecMF = MfdSolver.run([np.zeros(1), np.zeros((1,1))], Mu, verbose-3).n
     fout.write("Iter = %2d  Mu = %20.12f nelec = %20.12f\n" % (iterMuMfd, Mu, nelecMF))
     MuMfdSolver.update(nelecMF)
     if abs(1 - float(nelecMF)/nelec0) < Inp.DMFT.ThrNConv or iterMuMfd > Inp.MFD.MaxIterMu:
@@ -49,10 +49,10 @@ def main(InputDict, fout = sys.stdout):
   # initial guess for Delta, i.e. V and e
   if OrbType == "R":
     if Inp.DMFT.InitGuessType == "ZERO":
-      V = np.zeros((Lattice.supercell.nsites, Inp.DMFT.nbath), dtype = complex)
+      V = np.zeros((Lattice.supercell.nsites, Inp.DMFT.nbath))
       e = np.zeros(Inp.DMFT.nbath)
     elif Inp.DMFT.InitGuessType == "RAND":
-      V = np.random.rand(Lattice.supercell.nsites, Inp.DMFT.nbath, dtype = complex) - 0.5
+      V = (np.random.rand(Lattice.supercell.nsites, Inp.DMFT.nbath) - 0.5) * 0.2
       e = np.random.rand(Inp.DMFT.nbath) - 0.5
     else:
       raise Exception("Other initial guess not implemented")
@@ -116,22 +116,19 @@ def BathDiscretization(DeltaArray, freqArray, V0, e0):
   nfreq = len(freqArray)
 
   def unpack(x):
-    Vreal = x[:nImp*nBath].reshape[nImp, nBath]
-    Vimag = x[nImp*nBath:2*nImp*nBath].reshape[nImp, nBath]
-    e = x[2*nImp*nBath:2*nImp*nBath + nBath]
-    V = Vreal + 1.j * Vimag
+    V = x[:nImp*nBath].reshape(nImp, nBath)
+    e = x[nImp*nBath:nImp*nBath + nBath]
     return V, e    
 
   def target(x):
     V, e = unpack(x)
-    np.sum(map(lambda i: la.norm(DeltaArray[i] - Delta_from_bath(freqArray[i], False, V, e)) ** 2, range(nfreq)))
+    return np.sum(map(lambda i: la.norm(DeltaArray[i] - Delta_from_bath(freqArray[i], False, V, e)) ** 2, range(nfreq)))
   
-  x0 = np.hstack([V0.real.flatten(), V0.imag.flatten(), e0)
+  x0 = np.hstack([V0.flatten(), e0])
   results = scipy.optimize.minimize(target, x0, tol = 1e-5)
   V, e = unpack(results.x)
-  print results.fun
+  print "Bath discretization error", results.fun
   return V, e
-
 
 def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
   fout.write("DMFT inner loop: self-energy and hybridization\n")
@@ -141,7 +138,12 @@ def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose)
   # impurity hamiltonian
   h_imp = Lattice.FFTtoT(h0)[0]
   # compute hybridization
-  for Iter in range(10):
+  for Iter in range(30):
+    print
+    print "V="
+    print V
+    print "epsilon="
+    print e
     DeltaArray = map(lambda freq: Delta_from_bath(freq, False, V, e), inp_dmft.freq_sample)
     # compute impurity Green's function
     E, GFArray = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nEmb, nEmb, inp_dmft.freq_sample, False, fout, verbose - 3)
@@ -149,16 +151,16 @@ def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose)
     SigmaArray = map(lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
             - DeltaArray[idx], range(nfreq))
     # compute G(R_0,w) with self-energy
-    GlocArray = map(lambda idx: GR0_from_h_Sig(inp_dmft.freq_sample[idx], Mu, False, h0, SigmaArray[idx], Lattice), range(nfreq))
+    GlocArray = map(lambda idx: GR0_from_h_Sig(inp_dmft.freq_sample[idx], Mu, False, Fock, SigmaArray[idx], Lattice), range(nfreq))
     newDeltaArray = map(lambda idx: Delta_from_Gloc(inp_dmft.freq_sample[idx], Mu, False, h_imp, SigmaArray[idx], GlocArray[idx]), \
             range(nfreq))
     
     err = np.sum(map(lambda i: la.norm(DeltaArray[i] - newDeltaArray[i])**2, range(nfreq)))
-    fout.write("RMS error = %20.12f" % err)
-    if err < 1e-5:
+    fout.write("RMS error = %20.12f\n" % err)
+    if err < 1e-4:
       break
     damp = 0.5
-    FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1-damp) * DeltaArray[i], range(nfreq))
+    FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1.-damp) * DeltaArray[i], range(nfreq))
     V, e = BathDiscretization(FitDeltaArray, inp_dmft.freq_sample, V, e)
   
   # define computation type
@@ -393,3 +395,5 @@ def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose)
   #ImpSolver.CleanUp()
 
   #return Inp, BCSDmetResult(EmbResult, MfdResult, Vcor, Mu, dVcor, dmu, Lattice, Conv, iter)
+
+
