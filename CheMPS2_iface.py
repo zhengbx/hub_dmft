@@ -10,7 +10,7 @@ import PyCheMPS2
 Initializer = PyCheMPS2.PyInitialize()
 Initializer.Init()
 
-def computeGF(h0, Mu, V, eps, Int2e, nelecA, nelecB, omega, real, fout, verbose):
+def computeGF(h0, Mu, V, eps, Int2e, nelecA, nelecB, omega, fout, verbose):
   nImp, nBath = V.shape
   Ham = PyCheMPS2.PyHamiltonian(nImp+nBath, 0, np.zeros([nImp+nBath], dtype=ctypes.c_int))
   Ham.setEconst(0.)
@@ -42,26 +42,23 @@ def computeGF(h0, Mu, V, eps, Int2e, nelecA, nelecB, omega, real, fout, verbose)
   
   GFarray = []
   for o in omega:
-    alpha = Mu + E
+    alpha = Mu + E + o.real
     beta = -1
-    if real:
-      alpha += o
+    if abs(o.imag) < 1e-6:
       eta = 0.05
     else:
-      eta = o
+      eta = o.imag
 
     ReAdd, ImAdd = FCI.GFmatrix_add(alpha, beta, eta, anni_sites, crea_sites, spin_up, CIvector, Ham)
 
     GFadd = (ReAdd + 1.j * ImAdd).reshape((nImp, nImp), order = 'F')
     
-    alpha = Mu - E
+    alpha = Mu - E + o.real
     beta = 1
-    #eta = -0.1
-    if real:
-      alpha += o
+    if abs(o.imag) < 1e-6:
       eta = -0.05
     else:
-      eta = o
+      eta = o.imag
 
     ReRem, ImRem = FCI.GFmatrix_rem(alpha, beta, eta, crea_sites, anni_sites, spin_up, CIvector, Ham)
     GFrem = (ReRem + 1.j * ImRem).reshape((nImp, nImp), order = 'F').T
