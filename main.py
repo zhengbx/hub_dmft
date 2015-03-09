@@ -100,7 +100,7 @@ def SigDelta_from_Gimp(G, freq, Mu, real, himp):
     freq *= 1.j
   return np.eye(nImp, dtype = complex) * (freq + Mu) - himp - la.inv(G)
 
-def GR0_from_h_Sig(freq, Mu, real, h0k, Sigma):
+def GR0_from_h_Sig(freq, Mu, real, h0k, Sigma, Lattice):
   nImp = h0k.shape[1]
   if real:
     eta = 0.05 * np.sign(freq)
@@ -122,17 +122,19 @@ def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose)
   # compute impurity Green's function
   E, GFArray = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nEmb, nEmb, inp_dmft.freq_sample, False, fout, verbose - 3)
   # compute self-energy 
-  SigmaArray = (lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
+  SigmaArray = map(lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
           - DeltaArray[idx], range(nfreq))
   # compute G(R_0,w) with self-energy
-  GlocArray = map(lambda idx: GR0_from_Sig(inp_dmft.freq_sample[idx], Mu, False, h0, SigmaArray[idx]), range(nfreq))
-  newDeltaArray = map(lambda idx: Delta_from_Gloc(inp_dmft.freq_sample[idx], Mu, False, h_imp, SimgaArray[idx], Gloc[idx]), \
+  GlocArray = map(lambda idx: GR0_from_h_Sig(inp_dmft.freq_sample[idx], Mu, False, h0, SigmaArray[idx], Lattice), range(nfreq))
+  newDeltaArray = map(lambda idx: Delta_from_Gloc(inp_dmft.freq_sample[idx], Mu, False, h_imp, SigmaArray[idx], GlocArray[idx]), \
           range(nfreq))
   
-  err = map(lambda i: la.norm(DeltaArray[i] - newDeltaArray[i]), range(nfreq))
+  print newDeltaArray[0]
+  print newDeltaArray[-1]
+  err = np.sum(map(lambda i: la.norm(DeltaArray[i] - newDeltaArray[i]), range(nfreq)))
   fout.write("RMS error = %20.12f" % err)
   damp = 0.5
-  FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1-damp) * DeltaArray range(nfreq))
+  FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1-damp) * DeltaArray[i], range(nfreq))
 
 
   # define computation type
