@@ -16,12 +16,13 @@ Common["Geometry"] = {
     'Shape': np.eye(2)
   },
   'ClusterSize': np.array([2,2]),
-  'LatticeSize': np.array([20,20]), # defines k-points
+  'LatticeSize': np.array([50,50]), # defines k-points
 }
 
 Common["DMFT"] = {
   "Filling": 0.5,
   "OrbType": "R",
+  "InitGuessType": "ZERO",
   "nbath": 8,
   "ThrNConv": 1e-4,
 }

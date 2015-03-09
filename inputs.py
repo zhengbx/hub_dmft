@@ -68,6 +68,7 @@ class Input(object):
           # otherwise may provide the scale of the initial guess
       'nbath': value(allow=intType),
       'ThrNConv': 1e-4,
+      'freq_sample': np.linspace(-3.5,3.5,8),
   },
   'FITTING': {
   },

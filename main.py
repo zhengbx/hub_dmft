@@ -6,6 +6,7 @@ from ham import Hamiltonian
 from mean_field import init_mfd
 from timer import *
 from monofit import MonoSearch
+from CheMPS2_iface import computeGF
 #from diis import FDiisContext
 from utils import ToClass
 import sys
@@ -56,28 +57,52 @@ def main(InputDict, fout = sys.stdout):
       raise Exception("Other initial guess not implemented")
   else:
     raise Exception("initial guess for unrestricted calculations not implemented")
+
+  fout.write("\nInitial guess for the bath\n")
+  fout.write("V = \n%s\n" % V)
+  fout.write("epsilon = \n%s\n\n" % e)
   
-  for nEmb in range(int(nelec0+0.5), Inp.DMFT.nbath+Lattice.supercell.nsites):
+  fout.write("Entering DMFT outer loop: n_emb and Mu\n\n")
+  nmin = int(nelec0+0.5)
+  nmax = Inp.DMFT.nbath+Lattice.supercell.nsites
+  for i, nEmb in enumerate(range(nmin, nmax)):
+    fout.write('*'*40 + "\n\n    MacroIteration %2d out of %2d\n\n" % (i, nmax-nmin) + '*'*40 + '\n\nn_emb = %2d\n\n' % nEmb)
+
     MuSearcher = MonoSearch(nelec0, x0 = Mu)
     for iterMu, Mu in enumerate(MuSearcher):
-      nelec = DMFT_SCF(Lattice, nEmb, nelec0, MfdSolver, Mu, Inp, fout)
+      fout.write("******** chemical potential iteration %2d ********\n\n" % iterMu)
+      fout.write("Mu = %20.12f\n\n" % Mu)
+      nelec = DMFT_SCF(Lattice, V, e, nEmb, nelec0, MfdSolver, Mu, Inp.DMFT, fout, verbose)
       MuSearcher.update(nelec)
       if abs(1 - float(nelec)/nelec0) < Inp.DMFT.ThrNConv:
         break
 
-def DMFT_SCF(Lattice, nEmb, nelec, MfdSolver, Mu, Inp, fout):
+def Delta_from_bath(freq, real, V, e):
+  if not real:
+    freq *= 1.j
+  return np.einsum('ip,jp,p->ij', V.conj(), V, 1./(freq-e))
+
+
+def Sigma_from_Gimp(G, freq, Mu, real, himp, Delta):
+  nImp = himp.shape[0]
+  if real:
+    eta = 0.05 * np.sign(freq)
+    return np.eye(nImp, dtype = complex) * (freq + Mu + eta*1.j) - himp
+
+
+  
+
+def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
+  fout.write("DMFT inner loop: self-energy and hybridization\n")
   Fock = MfdSolver.Fock[0]
   H0 = MfdSolver.H0
   # impurity hamiltonian
-  h0 = Lattice.FFTtoT(H0)[0]
-   
-
-    
-
-    
-      # do dmft fitting
-    
-    
+  h_imp = Lattice.FFTtoT(H0)[0]
+  DeltaArray = map(lambda freq: Delta_from_bath(freq, False, V, e), inp_dmft.freq_sample)
+  print DeltaArray
+  assert(0)
+  E, GFArray = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nEmb, nEmb, inp_dmft.freq_sample, False, fout, verbose - 3)
+  print map(la.norm, GFarray)
 
 
   # define computation type
