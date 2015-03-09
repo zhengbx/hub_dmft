@@ -10,6 +10,7 @@ from CheMPS2_iface import computeGF
 #from diis import FDiisContext
 from utils import ToClass
 import sys
+import scipy
 
 def main(InputDict, fout = sys.stdout):
   timer_all = Timer()
@@ -48,10 +49,10 @@ def main(InputDict, fout = sys.stdout):
   # initial guess for Delta, i.e. V and e
   if OrbType == "R":
     if Inp.DMFT.InitGuessType == "ZERO":
-      V = np.zeros((Lattice.supercell.nsites, Inp.DMFT.nbath))
+      V = np.zeros((Lattice.supercell.nsites, Inp.DMFT.nbath), dtype = complex)
       e = np.zeros(Inp.DMFT.nbath)
     elif Inp.DMFT.InitGuessType == "RAND":
-      V = np.random.rand(Lattice.supercell.nsites, Inp.DMFT.nbath) - 0.5
+      V = np.random.rand(Lattice.supercell.nsites, Inp.DMFT.nbath, dtype = complex) - 0.5
       e = np.random.rand(Inp.DMFT.nbath) - 0.5
     else:
       raise Exception("Other initial guess not implemented")
@@ -110,6 +111,28 @@ def GR0_from_h_Sig(freq, Mu, real, h0k, Sigma, Lattice):
   G_k = np.array(map(lambda kidx: la.inv(np.eye(nImp, dtype = complex) * (freq + Mu) - h0k[kidx] - Sigma), range(h0k.shape[0])))
   return Lattice.FFTtoT(G_k)[0]
 
+def BathDiscretization(DeltaArray, freqArray, V0, e0):
+  nImp, nBath = V0.shape
+  nfreq = len(freqArray)
+
+  def unpack(x):
+    Vreal = x[:nImp*nBath].reshape[nImp, nBath]
+    Vimag = x[nImp*nBath:2*nImp*nBath].reshape[nImp, nBath]
+    e = x[2*nImp*nBath:2*nImp*nBath + nBath]
+    V = Vreal + 1.j * Vimag
+    return V, e    
+
+  def target(x):
+    V, e = unpack(x)
+    np.sum(map(lambda i: la.norm(DeltaArray[i] - Delta_from_bath(freqArray[i], False, V, e)) ** 2, range(nfreq)))
+  
+  x0 = np.hstack([V0.real.flatten(), V0.imag.flatten(), e0)
+  results = scipy.optimize.minimize(target, x0, tol = 1e-5)
+  V, e = unpack(results.x)
+  print results.fun
+  return V, e
+
+
 def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
   fout.write("DMFT inner loop: self-energy and hybridization\n")
   nfreq = len(inp_dmft.freq_sample)
@@ -118,25 +141,26 @@ def DMFT_SCF(Lattice, V, e, nEmb, nelec, MfdSolver, Mu, inp_dmft, fout, verbose)
   # impurity hamiltonian
   h_imp = Lattice.FFTtoT(h0)[0]
   # compute hybridization
-  DeltaArray = map(lambda freq: Delta_from_bath(freq, False, V, e), inp_dmft.freq_sample)
-  # compute impurity Green's function
-  E, GFArray = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nEmb, nEmb, inp_dmft.freq_sample, False, fout, verbose - 3)
-  # compute self-energy 
-  SigmaArray = map(lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
-          - DeltaArray[idx], range(nfreq))
-  # compute G(R_0,w) with self-energy
-  GlocArray = map(lambda idx: GR0_from_h_Sig(inp_dmft.freq_sample[idx], Mu, False, h0, SigmaArray[idx], Lattice), range(nfreq))
-  newDeltaArray = map(lambda idx: Delta_from_Gloc(inp_dmft.freq_sample[idx], Mu, False, h_imp, SigmaArray[idx], GlocArray[idx]), \
-          range(nfreq))
+  for Iter in range(10):
+    DeltaArray = map(lambda freq: Delta_from_bath(freq, False, V, e), inp_dmft.freq_sample)
+    # compute impurity Green's function
+    E, GFArray = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nEmb, nEmb, inp_dmft.freq_sample, False, fout, verbose - 3)
+    # compute self-energy 
+    SigmaArray = map(lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
+            - DeltaArray[idx], range(nfreq))
+    # compute G(R_0,w) with self-energy
+    GlocArray = map(lambda idx: GR0_from_h_Sig(inp_dmft.freq_sample[idx], Mu, False, h0, SigmaArray[idx], Lattice), range(nfreq))
+    newDeltaArray = map(lambda idx: Delta_from_Gloc(inp_dmft.freq_sample[idx], Mu, False, h_imp, SigmaArray[idx], GlocArray[idx]), \
+            range(nfreq))
+    
+    err = np.sum(map(lambda i: la.norm(DeltaArray[i] - newDeltaArray[i])**2, range(nfreq)))
+    fout.write("RMS error = %20.12f" % err)
+    if err < 1e-5:
+      break
+    damp = 0.5
+    FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1-damp) * DeltaArray[i], range(nfreq))
+    V, e = BathDiscretization(FitDeltaArray, inp_dmft.freq_sample, V, e)
   
-  print newDeltaArray[0]
-  print newDeltaArray[-1]
-  err = np.sum(map(lambda i: la.norm(DeltaArray[i] - newDeltaArray[i]), range(nfreq)))
-  fout.write("RMS error = %20.12f" % err)
-  damp = 0.5
-  FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1-damp) * DeltaArray[i], range(nfreq))
-
-
   # define computation type
   # Dmet = ChooseRoutine(Inp.DMET, Inp.CTRL, Lattice, Topo)
   
