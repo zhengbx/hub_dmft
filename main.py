@@ -79,36 +79,28 @@ def main(InputDict, fout = sys.stdout):
       if abs(1 - float(nelec)/nelec0) < Inp.DMFT.ThrNConv:
         break
 
-def Delta_from_bath(freq, real, V, e):
-  if not real:
-    freq *= 1.j
+def Delta_from_bath(freq, V, e):
   return np.einsum('ip,jp,p->ij', V.conj(), V, 1./(freq-e))
 
-def Delta_from_Gloc(freq, Mu, real, himp, Sigma, Gloc):
+def Delta_from_Gloc(freq, Mu, himp, Sigma, Gloc):
   nImp = himp.shape[0]
-  if real:
-    eta = 0.05 * np.sign(freq)
-    freq += eta * 1.j
-  else:
-    freq *= 1.j
+  if abs(freq.imag) < 1e-6:
+    eta = 0.05j * np.sign(freq.real)
+    freq += eta
   return np.eye(nImp, dtype = complex) * (freq + Mu) - himp - Sigma - la.inv(Gloc)
 
-def SigDelta_from_Gimp(G, freq, Mu, real, himp):
+def SigDelta_from_Gimp(G, freq, Mu, himp):
   nImp = himp.shape[0]
-  if real:
-    eta = 0.05 * np.sign(freq)
-    freq += eta * 1.j
-  else:
-    freq *= 1.j
+  if abs(freq.imag) < 1e-6:
+      eta = 0.05j * np.sign(freq.real)
+      freq += eta
   return np.eye(nImp, dtype = complex) * (freq + Mu) - himp - la.inv(G)
 
-def GR0_from_h_Sig(freq, Mu, real, h0k, Sigma, Lattice):
+def GR0_from_h_Sig(freq, Mu, h0k, Sigma, Lattice):
   nImp = h0k.shape[1]
-  if real:
-    eta = 0.05 * np.sign(freq)
-    freq += eta * 1.j
-  else:
-    freq *= 1.j
+  if abs(freq.imag) < 1e-6:
+      eta = 0.05j * np.sign(freq.real)
+      freq += eta
   G_k = np.array(map(lambda kidx: la.inv(np.eye(nImp, dtype = complex) * (freq + Mu) - h0k[kidx] - Sigma), range(h0k.shape[0])))
   return Lattice.FFTtoT(G_k)[0]
 
@@ -145,24 +137,24 @@ def DMFT_SCF(Lattice, V, e, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
     fout.write("%s\n" % V)
     fout.write("epsilon=\n")
     fout.write("%s\n" % e)
-    DeltaArray = map(lambda freq: Delta_from_bath(freq, False, V, e), inp_dmft.freq_sample)
+    DeltaArray = map(lambda freq: Delta_from_bath(freq * 1.j, V, e), inp_dmft.freq_sample)
     # compute impurity Green's function
-    E, GFArray = computeGS(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, inp_dmft.freq_sample, False, fout, verbose-3)
+    E, GFArray = computeGS(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, inp_dmft.freq_sample * 1.j, fout, verbose-3)
 
     # compute self-energy 
-    SigmaArray = map(lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
+    SigmaArray = map(lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx] * 1.j, Mu, h_imp) \
             - DeltaArray[idx], range(nfreq))
     # compute G(R_0,w) with self-energy
-    GlocArray = map(lambda idx: GR0_from_h_Sig(inp_dmft.freq_sample[idx], Mu, False, Fock, SigmaArray[idx], Lattice), range(nfreq))
-    newDeltaArray = map(lambda idx: Delta_from_Gloc(inp_dmft.freq_sample[idx], Mu, False, h_imp, SigmaArray[idx], GlocArray[idx]), \
+    GlocArray = map(lambda idx: GR0_from_h_Sig(inp_dmft.freq_sample[idx] * 1.j, Mu, Fock, SigmaArray[idx], Lattice), range(nfreq))
+    newDeltaArray = map(lambda idx: Delta_from_Gloc(inp_dmft.freq_sample[idx] * 1.j, Mu, h_imp, SigmaArray[idx], GlocArray[idx]), \
             range(nfreq))
 
     damp = 0.5
     FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1.-damp) * DeltaArray[i], range(nfreq))
-    dis_err, new_V, new_e = BathDiscretization(FitDeltaArray, inp_dmft.freq_sample, V, e)
+    dis_err, new_V, new_e = BathDiscretization(FitDeltaArray, inp_dmft.freq_sample * 1.j, V, e)
     fout.write("Bath discretization error %20.12f\n" % dis_err)
     err = sqrt(sum((new_V - V)**2) + sum((new_e-e)**2) / ((nImp+1) * nBath)).real
-    fout.write("RMS error = %20.12f" % err)    
+    fout.write("RMS error = %20.12f" % err)
     if err < inp_dmft.ThrBathConv:
       fout.write("  Converged\n")
       break
@@ -170,12 +162,17 @@ def DMFT_SCF(Lattice, V, e, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
         fout.write("\n")
 
   # now compute N_loc (interacting)
-  integral_freq = linspace(-100, 100, 201)
-
-
-  
-
-
+  r = 8
+  for n_sample in [2,4,8,16,32]:
+    integral_freq = -r + r * np.exp(map(np.pi / n_sample * (i+0.5) * 1.j, range(n_sample)))
+    Deltaintegral = map(lambda freq: Delta_from_bath(freq, V, e), integral_freq)
+    E, GFintegral = computeGS(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, integral_freq, False, fout, verbose-3)
+    Sigmaintegral = map(lambda idx: SigDelta_from_Gimp(GFintegral[idx], integral_freq, Mu, h_imp) \
+            -Deltaintegral[idx], range(n_sample))
+    GlocintegralTr = map(lambda idx: np.trace(GR0_from_h_Sig(integral_freq, Mu, Fock, Sigmaintegral[idx], Lattice)), range(n_sample))
+    length = map(lambda i: exp(np.pi / n_sample * (i+1.) * 1.j)-exp(np.pi / n_sample * i * 1.j), range(n_sample))
+    N_loc = -np.sum(np.array(Glocintegral) * np.array(length)).imag * r
+    print N_loc
   # define computation type
   # Dmet = ChooseRoutine(Inp.DMET, Inp.CTRL, Lattice, Topo)
   
