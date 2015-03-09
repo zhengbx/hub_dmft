@@ -15,7 +15,7 @@ Common["Geometry"] = {
     'Sites': [(np.array([0,0]), 'X')],
     'Shape': np.eye(2)
   },
-  'ClusterSize': np.array([2,2]),
+  'ClusterSize': np.array([1,1]),
   'LatticeSize': np.array([50,50]), # defines k-points
 }
 
@@ -23,12 +23,14 @@ Common["DMFT"] = {
   "Filling": 0.5,
   "OrbType": "R",
   "InitGuessType": "ZERO",
-  "nbath": 8,
+  "nbath": 5,
   "ThrNConv": 1e-4,
+  "freq_sample": np.linspace(0.1, 2, 20)
 }
 
 Common["MFD"] = {
-  "MaxIterMu": -1,
+  "MaxIterMu": 20,
+  "MaxIter": 10,
 }
 
 Common['FORMAT'] = {
