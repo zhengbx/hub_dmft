@@ -11,6 +11,7 @@ from CheMPS2_iface import computeGF
 from utils import ToClass
 import sys
 import scipy.optimize
+from cmath import sqrt
 
 def main(InputDict, fout = sys.stdout):
   timer_all = Timer()
@@ -68,7 +69,7 @@ def main(InputDict, fout = sys.stdout):
   nmin = int(nelec0+0.5)
   nmax = Inp.DMFT.nbath+Lattice.supercell.nsites
   for i, nelecEmb in enumerate(range(nmin, nmax)):
-    fout.write('*'*40 + "\n\n    MacroIteration %2d out of %2d\n\n" % (i, nmax-nmin) + '*'*40 + '\n\nn_emb = %2d\n\n' % nEmb)
+    fout.write('*'*40 + "\n\n    MacroIteration %2d out of %2d\n\n" % (i, nmax-nmin) + '*'*40 + '\n\nn_emb = %2d\n\n' % nelecEmb)
 
     MuSearcher = MonoSearch(nelec0, x0 = Mu)
     for iterMu, Mu in enumerate(MuSearcher):
@@ -137,9 +138,9 @@ def DMFT_SCF(Lattice, V, e, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
   Fock = MfdSolver.Fock[0]
   h0 = MfdSolver.H0
   # impurity hamiltonian
-  h_imp = lattice.ffttot(h0)[0]
+  h_imp = Lattice.FFTtoT(h0)[0]
   # compute hybridization
-  for iter in range(inp_dmft.maxinneriter):
+  for Iter in range(inp_dmft.MaxInnerIter):
     fout.write("Inner Iteration %2d\n" % Iter)
     fout.write("V=\n")
     fout.write("%s\n" % V)
@@ -147,7 +148,7 @@ def DMFT_SCF(Lattice, V, e, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
     fout.write("%s\n" % e)
     DeltaArray = map(lambda freq: Delta_from_bath(freq, False, V, e), inp_dmft.freq_sample)
     # compute impurity Green's function
-    E, GFArray = computeGS(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, inp_dmft.freq_sample, False, fout, verbose-3)
+    E, GFArray = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, inp_dmft.freq_sample, False, fout, verbose-3)
 
     # compute self-energy 
     SigmaArray = map(lambda idx: SigDelta_from_Gimp(GFArray[idx], inp_dmft.freq_sample[idx], Mu, False, h_imp) \
@@ -161,16 +162,17 @@ def DMFT_SCF(Lattice, V, e, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
     FitDeltaArray = map(lambda i: damp * newDeltaArray[i] + (1.-damp) * DeltaArray[i], range(nfreq))
     dis_err, new_V, new_e = BathDiscretization(FitDeltaArray, inp_dmft.freq_sample, V, e)
     fout.write("Bath discretization error %20.12f\n" % dis_err)
-    err = sqrt(sum((new_V - V)**2) + sum((new_e-e)**2) / ((nImp+1) * nBath)).real
+    err = sqrt(np.sum((new_V - V)**2) + np.sum((new_e-e)**2) / ((nImp+1) * nBath)).real
     fout.write("RMS error = %20.12f" % err)    
     if err < inp_dmft.ThrBathConv:
       fout.write("  Converged\n")
       break
     else:
-        fout.write("\n")
-
+      fout.write("\n")
+    
+    V, e = new_V, new_e
   # now compute N_loc (interacting)
-  integral_freq = linspace(-100, 100, 201)
+  #integral_freq = linspace(-100, 100, 201)
 
 
   

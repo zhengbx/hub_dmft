@@ -22,10 +22,10 @@ Common["Geometry"] = {
 Common["DMFT"] = {
   "Filling": 0.5,
   "OrbType": "R",
-  "InitGuessType": "ZERO",
-  "nbath": 5,
+  "InitGuessType": "RAND",
+  "nbath": 4,
   "ThrNConv": 1e-4,
-  "freq_sample": np.linspace(0.1, 2, 20)
+  "freq_sample": np.linspace(0.5, 3, 6)
 }
 
 Common["MFD"] = {
