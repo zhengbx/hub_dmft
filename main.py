@@ -66,7 +66,7 @@ def main(InputDict, fout = sys.stdout):
   fout.write("epsilon = \n%s\n\n" % e)
   
   fout.write("Entering DMFT outer loop: n_emb and Mu\n\n")
-  nmin = int(nelec0+0.5)
+  nmin = int(nelec0+0.5)+2
   nmax = Inp.DMFT.nbath+Lattice.supercell.nsites
   for i, nelecEmb in enumerate(range(nmin, nmax)):
     fout.write('*'*40 + "\n\n    MacroIteration %2d out of %2d\n\n" % (i, nmax-nmin) + '*'*40 + '\n\nn_emb = %2d\n\n' % nelecEmb)
@@ -76,6 +76,7 @@ def main(InputDict, fout = sys.stdout):
       fout.write("******** chemical potential iteration %2d ********\n\n" % iterMu)
       fout.write("Mu = %20.12f\n\n" % Mu)
       nelec = DMFT_SCF(Lattice, V, e, nelecEmb, MfdSolver, Mu, Inp.DMFT, fout, verbose)
+      print "electron density n = %20.12f   target = %20.12f" % (nelec, nelec0)
       MuSearcher.update(nelec)
       if abs(1 - float(nelec)/nelec0) < Inp.DMFT.ThrNConv:
         break
@@ -92,7 +93,7 @@ def Delta_from_Gloc(freq, Mu, himp, Sigma, Gloc):
 
 def SigDelta_from_Gimp(G, freq, Mu, himp):
   nImp = himp.shape[0]
-  if abs(freq.imag) < 1e-6:
+  if abs(freq.imag) < 1e-3:
       eta = 0.05j * np.sign(freq.real)
       freq += eta
   return np.eye(nImp, dtype = complex) * (freq + Mu) - himp - la.inv(G)
@@ -164,18 +165,53 @@ def DMFT_SCF(Lattice, V, e, nelec, MfdSolver, Mu, inp_dmft, fout, verbose):
     
     V, e = new_V, new_e
   # now compute N_loc (interacting)
+  # self-adaptive simpson integral
+
+  def getTrGloc(freq):
+    Delta = Delta_from_bath(freq, V, e)
+    _, GF = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, [freq], fout, verbose-4)
+    GF = GF[0]
+    Sigma = SigDelta_from_Gimp(GF, freq, Mu, h_imp) - Delta
+    TrGloc = np.trace(GR0_from_h_Sig(freq, Mu, Fock, Sigma, Lattice))
+    return TrGloc
+  
   r = 6
-  for n_sample in [2,4,8,16,32,64,128,256]:
-    integral_freq = -r + r * np.exp(map(lambda i: np.pi / n_sample * (i+0.5) * 1.j, range(n_sample)))
-    Deltaintegral = map(lambda freq: Delta_from_bath(freq, V, e), integral_freq)
-    E, GFintegral = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, integral_freq, fout, verbose-4)
-    Sigmaintegral = map(lambda idx: SigDelta_from_Gimp(GFintegral[idx], integral_freq[idx], Mu, h_imp) \
-            -Deltaintegral[idx], range(n_sample))
-    TrGlocintegral = map(lambda idx: np.trace(GR0_from_h_Sig(integral_freq[idx], Mu, Fock, Sigmaintegral[idx], Lattice)), range(n_sample))
-    length = map(lambda i: exp(np.pi / n_sample * (i+1.) * 1.j)-exp(np.pi / n_sample * i * 1.j), range(n_sample))
-    N_loc = np.sum(np.array(TrGlocintegral) * np.array(length)).imag * r
-    print TrGlocintegral
-    print N_loc
+  def arc(x):
+    return -r+r*exp(x*1.j)
+
+  class IntFunc(object):
+    def __init__(self):
+      self.record = {}
+    def __call__(self, x):
+      if not x in self.record.keys():
+        self.record[x] = (getTrGloc(arc(x)) * r * 1.j * exp(x*1.j)) / np.pi
+        #print x, self.record[x]
+      return self.record[x]
+
+  IntFn = IntFunc()
+  
+  def AdaptiveSimpInt(thr, fn, a, b):
+    I1 = (fn(a) + 4*fn((a+b)/2) + fn(b)) / 6 * (b-a)
+    I2 = (fn(a) + 4*fn(0.75*a+0.25*b) + 2*fn((a+b)/2) + 4*fn(0.25*a+0.75*b) + fn(b)) / 12 * (b-a)
+    if abs(I1-I2) < thr:
+      return 0.5 * (I1+I2)
+    else:
+      return AdaptiveSimpInt(thr*0.7, fn, a, (a+b)/2) + AdaptiveSimpInt(thr*0.7, fn, (a+b)/2, b)
+  
+  return AdaptiveSimpInt(1e-3, IntFn, 1.1e-6, np.pi-1.1e-6).imag
+
+  #r = 6
+  #for n_sample in [2,4,8,16,32,64,128,256]:
+  #  integral_freq = -r + r * np.exp(map(lambda i: np.pi / n_sample * (i+0.5) * 1.j, range(n_sample)))
+  #  Deltaintegral = map(lambda freq: Delta_from_bath(freq, V, e), integral_freq)
+  #  E, GFintegral = computeGF(h_imp, Mu, V, e, Lattice.Ham.Int2e, nelec, nelec, integral_freq, fout, verbose-4)
+  #  Sigmaintegral = map(lambda idx: SigDelta_from_Gimp(GFintegral[idx], integral_freq[idx], Mu, h_imp) \
+  #          -Deltaintegral[idx], range(n_sample))
+  #  TrGlocintegral = map(lambda idx: np.trace(GR0_from_h_Sig(integral_freq[idx], Mu, Fock, Sigmaintegral[idx], Lattice)), range(n_sample))
+  #  length = map(lambda i: exp(np.pi / n_sample * (i+1.) * 1.j)-exp(np.pi / n_sample * i * 1.j), range(n_sample))
+  #  N_loc = np.sum(np.array(TrGlocintegral) * np.array(length)).imag * r
+  #  print TrGlocintegral
+  #  print N_loc
   # define computation type
   # Dmet = ChooseRoutine(Inp.DMET, Inp.CTRL, Lattice, Topo)
   
